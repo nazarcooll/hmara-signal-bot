@@ -1,4 +1,4 @@
-from .plugins import PluginRouter
+import os
 from gi.repository import GLib
 from importlib import import_module
 from os import chdir
@@ -13,6 +13,7 @@ from threading import Thread
 from yaml import SafeLoader
 import yaml
 
+from signalbot.plugins import PluginRouter
 
 class Chats(dict):
 
@@ -146,7 +147,7 @@ class Signalbot(object):
 
         if self._config['bus'] == 'session' or self._config['bus'] is None:
             self._bus = SessionBus()
-        elif self.args.bus == 'system':
+        elif self._config['bus'] == 'system':
             self._bus = SystemBus()
         else:
             self._bus = connect(self._config['bus'])
@@ -219,13 +220,18 @@ class Signalbot(object):
         self._thread.join()
 
     def send_message(self, text, attachments, chat):
+        res = None
         if chat.is_group:
             self._signal.sendGroupMessage(text, attachments, list(chat.id))
         else:
             try:
-                return self._signal.sendMessage(text, attachments, chat.id)
+                res = self._signal.sendMessage(text, attachments, chat.id)
             except TypeError:
-                return self._signal.sendMessage(text, attachments, [chat.id])
+                res = self._signal.sendMessage(text, attachments, [chat.id])
+            except Exception as e:
+                print(e)
+
+        return res
 
     def send_error(self, text, attachments, chat):
         self.send_message(text + ' ❌', attachments, chat)
