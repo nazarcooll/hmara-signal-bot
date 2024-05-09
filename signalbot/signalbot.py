@@ -10,6 +10,7 @@ from sys import exit
 from tempfile import TemporaryDirectory
 from textwrap import dedent
 from threading import Thread
+from yaml import SafeLoader
 import yaml
 
 
@@ -81,7 +82,7 @@ class Message(object):
 
 class Signalbot(object):
 
-    def __init__(self, data_dir=None, mocker=False):
+    def __init__(self, data_dir=None, mocker=False, is_from_worker = True):
         self._mocker = mocker
 
         if data_dir is None:
@@ -93,17 +94,20 @@ class Signalbot(object):
 
         # defaults
         self._config = {
+            'chat_bot_user': None,
             'bus': None,
             'enabled': {},
             'master': None,
             'plugins': [],
             'testing_plugins': [],
-            'startup_notification': False,
+            'startup_notification': False
         }
 
         self._configfile = Path.joinpath(self._data_dir, 'config.yaml')
         with self._configfile.open('r') as yamlfile:
-            self._config.update(yaml.load(yamlfile))
+            self._config.update(yaml.load(yamlfile, SafeLoader))
+ 
+        self._config['startup_notification'] = self._config['startup_notification'] if is_from_worker else False
 
     def _save_config(self):
         with self._configfile.open('w') as yamlfile:
@@ -150,7 +154,8 @@ class Signalbot(object):
         if self._mocker:
             self._signal = self._bus.get('org.signalbot.signalclidbusmock')
         else:
-            self._signal = self._bus.get('org.asamk.Signal')
+            chat_bot_user = str(self._config['chat_bot_user']).replace('+', '_')
+            self._signal = self._bus.get('org.asamk.Signal', f'/org/asamk/Signal/{chat_bot_user}')
         self._signal.onMessageReceived = self._triagemessage
 
         # Actively discourage chdir in plugins, see _triagemessage
@@ -188,6 +193,14 @@ class Signalbot(object):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._config['startup_notification']:
+            for master in self._config['master']:
+                master_chat_id = Chats.get_id_from_sender_and_group_id(
+                    master, [])
+                master_chat = self._chats.get(master_chat_id, store=True)
+                self.send_error('Stopping service!', [],
+                                    master_chat)
+
         self._loop.quit()
         self._thread.join()
         self._signal.onMessageReceived = None
@@ -209,7 +222,10 @@ class Signalbot(object):
         if chat.is_group:
             self._signal.sendGroupMessage(text, attachments, list(chat.id))
         else:
-            self._signal.sendMessage(text, attachments, [chat.id])
+            try:
+                return self._signal.sendMessage(text, attachments, chat.id)
+            except TypeError:
+                return self._signal.sendMessage(text, attachments, [chat.id])
 
     def send_error(self, text, attachments, chat):
         self.send_message(text + ' ❌', attachments, chat)
